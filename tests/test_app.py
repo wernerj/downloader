@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+from textual.screen import ModalScreen
 from textual.widgets import DataTable, Input
 
 from conftest import wait_for
@@ -46,6 +47,14 @@ async def test_keys_drive_the_queue(server, tmp_path):
         assert len(manager.items) == 2
         await pilot.press("d", "y")
         assert manager.items == [first] and table.row_count == 1
+
+        # "D" removes immediately, no dialog
+        await pilot.press("a")
+        await pilot.press(*f"{server.base}/c/file.bin", "enter")
+        assert table.row_count == 2
+        await pilot.press("D")
+        assert manager.items == [first] and table.row_count == 1
+        assert not isinstance(app.screen, ModalScreen)
 
         await wait_for(lambda: first.state == DONE)
         assert Path(first.dest).read_bytes() == server.expected("/a/file.bin")

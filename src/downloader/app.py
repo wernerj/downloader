@@ -107,6 +107,7 @@ class DownloaderApp(App):
         Binding("p,space", "toggle", "Pause/Resume"),
         Binding("r", "retry", "Retry"),
         Binding("d", "remove", "Remove"),
+        Binding("D", "remove_now", "Remove (no confirm)"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -137,7 +138,7 @@ class DownloaderApp(App):
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         # Queue keys do nothing while a dialog is open.
-        if isinstance(self.screen, ModalScreen) and action in ("add", "toggle", "retry", "remove", "quit"):
+        if isinstance(self.screen, ModalScreen) and action in ("add", "toggle", "retry", "remove", "remove_now", "quit"):
             return False
         return True
 
@@ -209,6 +210,12 @@ class DownloaderApp(App):
                 self.refresh_table()
 
         self.push_screen(ConfirmScreen(f"Remove [b]{item.name}[/] from the queue? The file on disk is kept."), done)
+
+    def action_remove_now(self) -> None:
+        item = self.selected()
+        if item:
+            self.manager.remove(item)
+            self.refresh_table()
 
     async def action_quit(self) -> None:
         await self.manager.shutdown()

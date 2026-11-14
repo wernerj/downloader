@@ -28,6 +28,7 @@ python3 -m venv .venv
 | `p` or `Space` | pause / resume selected |
 | `r` | retry a failed download |
 | `d` | remove from queue (asks first; the file on disk is kept) |
+| `D` | remove from queue immediately, no confirmation (file on disk is kept) |
 | `q` | quit (running downloads are paused and saved) |
 
 ## File names
