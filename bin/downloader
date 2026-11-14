@@ -1,0 +1,15 @@
+#!/bin/sh
+# Launcher: runs the downloader from its project venv.
+# Symlink it into ~/bin:  ln -s ~/Developer/downloader/bin/downloader ~/bin/downloader
+src="$0"
+while [ -L "$src" ]; do                      # follow symlinks to the real script
+  dir=$(cd "$(dirname "$src")" && pwd)
+  src=$(readlink "$src")
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+root=$(cd "$(dirname "$src")/.." && pwd)
+if [ ! -x "$root/.venv/bin/downloader" ]; then
+  echo "downloader: $root/.venv is missing. Run: python3 -m venv .venv && .venv/bin/pip install -e ." >&2
+  exit 1
+fi
+exec "$root/.venv/bin/downloader" "$@"
