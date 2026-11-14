@@ -24,11 +24,14 @@ python3 -m venv .venv
 | Key | Action |
 |---|---|
 | `↑` / `↓` | move selection |
+| `Shift+↑` / `Shift+↓` | select several (`p`, `d`, `D`, `r` then act on all; `Esc` or a plain arrow clears) |
+| `Option+↑` / `Option+↓` | move the selected items up / down in the queue (waiting downloads start in list order) |
 | `a` | add URL |
 | `p` or `Space` | pause / resume selected |
 | `r` | retry a failed download |
 | `d` | remove from queue (asks first; the file on disk is kept) |
 | `D` | remove from queue immediately, no confirmation (file on disk is kept) |
+| `f` | move the selected finished files into a new or existing folder under the download folder (asks for the folder name) |
 | `q` | quit (running downloads are paused and saved) |
 
 ## File names

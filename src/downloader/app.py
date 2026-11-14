@@ -37,7 +37,7 @@ def human_time(seconds: float) -> str:
     return f"{seconds}s"
 
 
-def row_cells(item: Download) -> dict[str, str]:
+def row_cells(item: Download, marked: bool = False) -> dict[str, str]:
     style = STATE_STYLE[item.state]
     state = f"[{style}]{item.state}[/]"
     if item.state == FAILED and item.error:
@@ -55,22 +55,28 @@ def row_cells(item: Download) -> dict[str, str]:
         speed = f"{human_size(item.speed)}/s"
         if item.total:
             eta = human_time((item.total - item.downloaded) / item.speed)
-    return {"name": item.name, "state": state, "progress": progress,
+    name = f"[b]● {item.name}[/]" if marked else f"  {item.name}"
+    return {"name": name, "state": state, "progress": progress,
             "size": size, "speed": speed, "eta": eta}
 
 
-class AddUrlScreen(ModalScreen[str | None]):
+class PromptScreen(ModalScreen[str | None]):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
     DEFAULT_CSS = """
-    AddUrlScreen { align: center middle; }
-    AddUrlScreen > Vertical { width: 80%; max-width: 100; height: auto;
+    PromptScreen { align: center middle; }
+    PromptScreen > Vertical { width: 80%; max-width: 100; height: auto;
         border: round $accent; padding: 1 2; background: $surface; }
     """
 
+    def __init__(self, title: str, placeholder: str = ""):
+        super().__init__()
+        self.title_text = title
+        self.placeholder = placeholder
+
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Label("Add URL  [dim](Enter to add, Esc to cancel)[/]")
-            yield Input(placeholder="https://example.com/file.zip")
+            yield Label(f"{self.title_text}  [dim](Enter to confirm, Esc to cancel)[/]")
+            yield Input(placeholder=self.placeholder)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self.dismiss(event.value.strip() or None)
@@ -100,6 +106,31 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(value)
 
 
+class QueueTable(DataTable):
+    """DataTable where Shift+arrows extend a selection and plain arrows drop it."""
+
+    BINDINGS = [
+        Binding("shift+up", "extend(-1)", "Select up", show=False),
+        Binding("shift+down", "extend(1)", "Select down", show=False),
+        Binding("alt+up", "shift_items(-1)", "Move up", show=False),
+        Binding("alt+down", "shift_items(1)", "Move down", show=False),
+    ]
+
+    def action_extend(self, step: int) -> None:
+        self.app.extend_selection(step)
+
+    def action_shift_items(self, step: int) -> None:
+        self.app.shift_items(step)
+
+    def action_cursor_up(self) -> None:
+        self.app.clear_selection()
+        super().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self.app.clear_selection()
+        super().action_cursor_down()
+
+
 class DownloaderApp(App):
     TITLE = "downloader"
     BINDINGS = [
@@ -107,18 +138,21 @@ class DownloaderApp(App):
         Binding("p,space", "toggle", "Pause/Resume"),
         Binding("r", "retry", "Retry"),
         Binding("d", "remove", "Remove"),
+        Binding("f", "move", "Move to folder"),
         Binding("D", "remove_now", "Remove (no confirm)"),
         Binding("q", "quit", "Quit"),
+        Binding("escape", "clear_selection", "Clear selection", show=False),
     ]
 
     def __init__(self, manager: Manager, urls: list[str] | None = None):
         super().__init__()
         self.manager = manager
         self.initial_urls = urls or []
+        self._anchor: int | None = None  # where a Shift+arrow selection started
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield DataTable(cursor_type="row", zebra_stripes=True)
+        yield QueueTable(cursor_type="row", zebra_stripes=True)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -138,7 +172,7 @@ class DownloaderApp(App):
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         # Queue keys do nothing while a dialog is open.
-        if isinstance(self.screen, ModalScreen) and action in ("add", "toggle", "retry", "remove", "remove_now", "quit"):
+        if isinstance(self.screen, ModalScreen) and action in ("add", "toggle", "retry", "remove", "remove_now", "move", "quit"):
             return False
         return True
 
@@ -147,19 +181,61 @@ class DownloaderApp(App):
     def refresh_table(self) -> None:
         self.manager.tick()
         table = self.table
+        marked = {item.id for item in self.selection()} if self._anchor is not None else set()
+        count = len(marked)
+        self.sub_title = f"{self.manager.dest_dir}" + (f"  ·  {count} selected" if count > 1 else "")
         wanted = {item.id for item in self.manager.items}
         for row_key in list(table.rows):
             if row_key.value not in wanted:
                 table.remove_row(row_key)
         present = {row_key.value for row_key in table.rows}
         for item in self.manager.items:
-            cells = row_cells(item)
+            cells = row_cells(item, item.id in marked)
             if item.id not in present:
                 table.add_row(*(cells[key] for key, _ in COLUMNS), key=item.id)
             else:
                 for key, _ in COLUMNS:
                     if table.get_cell(item.id, key) != cells[key]:
                         table.update_cell(item.id, key, cells[key], update_width=True)
+
+    def selection(self) -> list[Download]:
+        """Items to act on: the Shift+arrow range, or just the row under the cursor."""
+        count = self.table.row_count
+        if not count:
+            return []
+        cursor = self.table.cursor_row
+        anchor = cursor if self._anchor is None else min(self._anchor, count - 1)
+        low, high = sorted((anchor, cursor))
+        return self.manager.items[low : high + 1]
+
+    def extend_selection(self, step: int) -> None:
+        table = self.table
+        if not table.row_count:
+            return
+        if self._anchor is None:
+            self._anchor = table.cursor_row
+        table.move_cursor(row=max(0, min(table.row_count - 1, table.cursor_row + step)))
+        self.refresh_table()
+
+    def shift_items(self, step: int) -> None:
+        """Move the selected items one place up or down in the queue."""
+        table = self.table
+        if not self.manager.reorder(self.selection(), step):
+            return
+        cursor = table.cursor_row + step
+        if self._anchor is not None:
+            self._anchor += step
+        table.clear()  # rows are keyed by id; rebuild them in the new order
+        self.refresh_table()
+        table.move_cursor(row=cursor)
+
+    def clear_selection(self) -> None:
+        if self._anchor is not None:
+            self._anchor = None
+            self.refresh_table()
+
+    def action_clear_selection(self) -> None:
+        self.clear_selection()
 
     def selected(self) -> Download | None:
         table = self.table
@@ -174,6 +250,7 @@ class DownloaderApp(App):
         except ValueError as exc:
             self.notify(f"{exc}: {url}", severity="error")
             return
+        self._anchor = None
         self.refresh_table()
         if select:
             self.table.move_cursor(row=self.table.get_row_index(item.id))
@@ -185,37 +262,66 @@ class DownloaderApp(App):
             if url:
                 self._add(url, select=True)
 
-        self.push_screen(AddUrlScreen(), done)
+        self.push_screen(PromptScreen("Add URL", "https://example.com/file.zip"), done)
 
     def action_toggle(self) -> None:
-        item = self.selected()
-        if item:
-            self.manager.toggle(item)
-            self.refresh_table()
+        items = self.selection()
+        if any(i.state in (DOWNLOADING, QUEUED) for i in items):
+            for item in items:
+                self.manager.pause(item)  # pauses the active ones, ignores the rest
+        else:
+            for item in items:
+                self.manager.resume(item)
+        self.refresh_table()
 
     def action_retry(self) -> None:
-        item = self.selected()
-        if item and item.state == FAILED:
-            self.manager.resume(item)
+        for item in self.selection():
+            if item.state == FAILED:
+                self.manager.resume(item)
+        self.refresh_table()
+
+    def action_move(self) -> None:
+        items = [i for i in self.selection() if i.state == DONE]
+        if not items:
+            self.notify("Select finished downloads to move", severity="warning")
+            return
+
+        def done(folder: str | None) -> None:
+            if not folder:
+                return
+            try:
+                moved, problems = self.manager.move_done(items, folder)
+            except ValueError as exc:
+                self.notify(str(exc), severity="error")
+                return
+            if moved:
+                self.notify(f"Moved {moved} file(s) to {folder}/")
+            if problems:
+                self.notify("\n".join(problems), severity="error")
             self.refresh_table()
 
+        self.push_screen(PromptScreen(f"Move {len(items)} file(s) to folder", "folder name"), done)
+
     def action_remove(self) -> None:
-        item = self.selected()
-        if not item:
+        items = self.selection()
+        if not items:
             return
+        what = f"[b]{items[0].name}[/]" if len(items) == 1 else f"[b]{len(items)} items[/]"
 
         def done(confirmed: bool | None) -> None:
             if confirmed:
-                self.manager.remove(item)
-                self.refresh_table()
+                self._remove(items)
 
-        self.push_screen(ConfirmScreen(f"Remove [b]{item.name}[/] from the queue? The file on disk is kept."), done)
+        self.push_screen(ConfirmScreen(f"Remove {what} from the queue? Files on disk are kept."), done)
 
     def action_remove_now(self) -> None:
-        item = self.selected()
-        if item:
+        self._remove(self.selection())
+
+    def _remove(self, items: list[Download]) -> None:
+        self._anchor = None
+        for item in items:
             self.manager.remove(item)
-            self.refresh_table()
+        self.refresh_table()
 
     async def action_quit(self) -> None:
         await self.manager.shutdown()

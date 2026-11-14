@@ -89,3 +89,33 @@ async def test_quit_and_restart_resumes(server, tmp_path):
     m2.resume(restored)
     await wait_for(lambda: restored.state == DONE)
     assert Path(restored.dest).read_bytes() == server.expected("/a/file.bin")
+
+
+async def test_move_done_files_into_folder(server, tmp_path):
+    m = make(tmp_path)
+    a = m.add(f"{server.base}/a/file.bin")
+    b = m.add(f"{server.base}/b/file.bin")
+    await wait_for(lambda: a.state == DONE and b.state == DONE)
+
+    for bad in ("", "..", "a/b", "../x"):
+        with pytest.raises(ValueError):
+            m.move_done([a], bad)
+
+    moved, problems = m.move_done([a, b], "videos")
+    assert (moved, problems) == (2, [])
+    assert Path(a.dest).parent == m.dest_dir / "videos"
+    assert Path(a.dest).read_bytes() == server.expected("/a/file.bin")
+    assert [i.dest for i in Store(tmp_path / "queue.json").load()] == [a.dest, b.dest]
+
+    # moving again: files are in the folder already -> reported, not overwritten
+    moved, problems = m.move_done([a], "videos")
+    assert moved == 0 and "already exists" in problems[0]
+
+
+async def test_move_skips_unfinished(server, tmp_path):
+    m = make(tmp_path)
+    item = m.add(f"{server.base}/a/file.bin")
+    moved, problems = m.move_done([item], "x")
+    assert moved == 0 and "not finished" in problems[0]
+    assert not (m.dest_dir / "x").exists()  # no empty folder left behind
+    await m.shutdown()

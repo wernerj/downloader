@@ -60,3 +60,88 @@ async def test_keys_drive_the_queue(server, tmp_path):
         assert Path(first.dest).read_bytes() == server.expected("/a/file.bin")
         await pilot.press("q")
     assert Store(tmp_path / "queue.json").load()[0].state == DONE
+
+
+async def test_shift_arrows_select_several(server, tmp_path):
+    manager = Manager(tmp_path / "dl", Store(tmp_path / "queue.json"), max_parallel=5)
+    urls = [f"{server.base}/{n}/file.bin" for n in "abcd"]
+    app = DownloaderApp(manager, urls)
+    async with app.run_test(size=(120, 30)) as pilot:
+        table = app.query_one(DataTable)
+        await pilot.press("home")
+        assert table.cursor_row == 0
+        await pilot.press("shift+down", "shift+down")
+        assert app.selection() == manager.items[0:3]
+        assert "3 selected" in app.sub_title
+        # extending back shrinks the range
+        await pilot.press("shift+up")
+        assert app.selection() == manager.items[0:2]
+        await pilot.press("shift+down")
+
+        # one key acts on all selected
+        await pilot.press("p")
+        assert [i.state for i in manager.items] == [PAUSED, PAUSED, PAUSED, DOWNLOADING]
+        await pilot.press("space")
+        assert [i.state for i in manager.items[:3]] == [DOWNLOADING] * 3
+
+        # a plain arrow drops the selection; escape does too
+        await pilot.press("down")
+        assert app.selection() == [manager.items[3]]
+        await pilot.press("shift+up", "escape")
+        assert len(app.selection()) == 1
+
+        # "d" asks once for the whole selection, "D" removes at once
+        await pilot.press("up", "shift+up", "d")
+        assert isinstance(app.screen, ModalScreen)
+        await pilot.press("y")
+        assert len(manager.items) == 2
+        await pilot.press("shift+down", "D")
+        assert manager.items == []
+        await pilot.press("q")
+
+
+async def test_f_moves_finished_files(server, tmp_path):
+    manager = Manager(tmp_path / "dl", Store(tmp_path / "queue.json"), max_parallel=3)
+    app = DownloaderApp(manager, [f"{server.base}/a/file.bin"])
+    async with app.run_test(size=(120, 30)) as pilot:
+        (item,) = manager.items
+        await pilot.press("f")  # still downloading: no dialog
+        assert not isinstance(app.screen, ModalScreen)
+        await wait_for(lambda: item.state == DONE)
+        await pilot.press("f")
+        assert isinstance(app.focused, Input)
+        await pilot.press(*"movies", "enter")
+        assert Path(item.dest).parent == tmp_path / "dl" / "movies"
+        assert Path(item.dest).read_bytes() == server.expected("/a/file.bin")
+        await pilot.press("q")
+
+
+async def test_alt_arrows_reorder(server, tmp_path):
+    manager = Manager(tmp_path / "dl", Store(tmp_path / "queue.json"), max_parallel=1)
+    urls = [f"{server.base}/{n}/file.bin" for n in "abcd"]
+    app = DownloaderApp(manager, urls)
+    async with app.run_test(size=(120, 30)) as pilot:
+        table = app.query_one(DataTable)
+        a, b, c, d = manager.items
+
+        def shown():
+            return [row.key.value for row in table.ordered_rows]
+
+        await pilot.press("down", "down")  # cursor on c
+        await pilot.press("alt+up")
+        assert manager.items == [a, c, b, d] and shown() == [i.id for i in manager.items]
+        assert app.selection() == [c] and table.cursor_row == 1
+
+        await pilot.press("alt+up", "alt+up")  # second press stops at the top
+        assert manager.items == [c, a, b, d] and table.cursor_row == 0
+
+        # a Shift+arrow selection moves as a block
+        await pilot.press("shift+down")
+        assert app.selection() == [c, a]
+        await pilot.press("alt+down")
+        assert manager.items == [b, c, a, d] and shown() == [i.id for i in manager.items]
+        assert app.selection() == [c, a]
+        await pilot.press("alt+down", "alt+down")
+        assert manager.items == [b, d, c, a]  # block stops at the bottom
+        assert Store(tmp_path / "queue.json").load()[0].id == b.id
+        await pilot.press("q")

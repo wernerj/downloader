@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import shutil
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -78,6 +79,51 @@ class Manager:
         self._stop(item)
         self.items.remove(item)
         self._changed()
+
+    def reorder(self, items: list[Download], step: int) -> bool:
+        """Move items one place up (step=-1) or down (step=1). True if anything moved.
+
+        Waiting downloads start in list order, so this also changes what runs next.
+        """
+        chosen = {item.id for item in items}
+        order = range(len(self.items)) if step < 0 else range(len(self.items) - 1, -1, -1)
+        moved = False
+        for i in order:
+            j = i + step
+            if self.items[i].id in chosen and 0 <= j < len(self.items) and self.items[j].id not in chosen:
+                self.items[i], self.items[j] = self.items[j], self.items[i]
+                moved = True
+        if moved:
+            self._changed()
+        return moved
+
+    def move_done(self, items: list[Download], folder: str) -> tuple[int, list[str]]:
+        """Move finished files into dest_dir/<folder>. Returns (moved count, problems)."""
+        folder = folder.strip()
+        if not folder or folder in (".", "..") or any(c in folder for c in "/\\\0"):
+            raise ValueError("Folder name must be a single name, without slashes")
+        target = self.dest_dir / folder
+        moved, problems = 0, []
+        for item in items:
+            new = target / item.name
+            if item.state != DONE:
+                problems.append(f"{item.name}: not finished")
+            elif not os.path.isfile(item.dest):
+                problems.append(f"{item.name}: file not found")
+            elif new.exists():
+                problems.append(f"{item.name}: already exists in {folder}")
+            else:
+                try:
+                    target.mkdir(exist_ok=True)
+                    shutil.move(item.dest, new)
+                except OSError as exc:
+                    problems.append(f"{item.name}: {exc.strerror or exc}")
+                    continue
+                item.dest = str(new)
+                moved += 1
+        if moved:
+            self.store.save(self.items)
+        return moved, problems
 
     def tick(self) -> None:
         """Refresh sizes and speeds from the files on disk."""
