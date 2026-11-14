@@ -194,8 +194,8 @@ class DownloaderApp(App):
         Binding("d", "remove", "Remove"),
         Binding("f", "move", "Move to folder"),
         Binding("D", "remove_now", "Remove (no confirm)"),
-        Binding("plus,equals_sign,kp_plus", "jobs(1)", "+ job"),
-        Binding("minus,kp_minus", "jobs(-1)", "- job"),
+        Binding("plus,equals_sign,kp_plus", "jobs(1)", "Jobs", key_display="+/-"),
+        Binding("minus,kp_minus", "jobs(-1)", "Fewer jobs", show=False),
         Binding("q", "quit", "Quit"),
         Binding("escape", "clear_selection", "Clear selection", show=False),
     ]
@@ -337,7 +337,13 @@ class DownloaderApp(App):
         self.refresh_table()
 
     def action_jobs(self, step: int) -> None:
-        self.manager.set_max_parallel(self.manager.max_parallel + step)
+        before = self.manager.max_parallel
+        self.manager.set_max_parallel(before + step)
+        now = self.manager.max_parallel
+        if now == before:
+            self.notify("Minimum is 1 parallel download", severity="warning", timeout=2)
+        else:
+            self.notify(f"Parallel downloads: {now}", timeout=2)
         self.refresh_table()
 
     def action_move(self) -> None:
