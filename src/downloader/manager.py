@@ -97,6 +97,19 @@ class Manager:
             self._changed()
         return moved
 
+    def set_max_parallel(self, count: int) -> None:
+        """Change the parallel limit. Running downloads are kept; a lower limit only stops new starts."""
+        self.max_parallel = max(1, count)
+        self._schedule()
+
+    def folders(self) -> list[str]:
+        """Names of existing sub-folders of dest_dir (candidates for move_done)."""
+        try:
+            return sorted((e.name for e in os.scandir(self.dest_dir)
+                           if e.is_dir() and not e.name.startswith(".")), key=str.lower)
+        except OSError:
+            return []
+
     def move_done(self, items: list[Download], folder: str) -> tuple[int, list[str]]:
         """Move finished files into dest_dir/<folder>. Returns (moved count, problems)."""
         folder = folder.strip()

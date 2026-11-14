@@ -6,7 +6,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Footer, Header, Input, Label
+from textual.widgets import DataTable, Footer, Header, Input, Label, OptionList
 
 from .manager import Manager
 from .store import DONE, DOWNLOADING, FAILED, PAUSED, QUEUED, Download
@@ -44,8 +44,10 @@ def row_cells(item: Download, marked: bool = False) -> dict[str, str]:
         state += f" [dim]{item.error[:40].replace('[', '(')}[/]"
     if item.total:
         fraction = min(1.0, item.downloaded / item.total)
-        filled = int(fraction * BAR_WIDTH)
-        progress = f"[{style}]{'█' * filled}[/][dim]{'░' * (BAR_WIDTH - filled)}[/] {fraction * 100:3.0f}%"
+        # Only a completed download shows 100%; otherwise round down and cap at 99%.
+        percent = 100 if item.state == DONE else min(99, int(fraction * 100))
+        filled = BAR_WIDTH if item.state == DONE else min(BAR_WIDTH - 1, int(fraction * BAR_WIDTH))
+        progress = f"[{style}]{'█' * filled}[/][dim]{'░' * (BAR_WIDTH - filled)}[/] {percent:3d}%"
         size = f"{human_size(item.downloaded)} / {human_size(item.total)}"
     else:
         progress = ""
@@ -80,6 +82,58 @@ class PromptScreen(ModalScreen[str | None]):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self.dismiss(event.value.strip() or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class FolderScreen(ModalScreen[str | None]):
+    """Type a new folder name, or pick an existing one (Down arrow moves into the list)."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("down", "to_list", "Existing folders", show=False)]
+    DEFAULT_CSS = """
+    FolderScreen { align: center middle; }
+    FolderScreen > Vertical { width: 80%; max-width: 100; height: auto;
+        border: round $accent; padding: 1 2; background: $surface; }
+    FolderScreen OptionList { height: auto; max-height: 10; margin-top: 1; }
+    """
+
+    def __init__(self, title: str, folders: list[str]):
+        super().__init__()
+        self.title_text = title
+        self.folders = folders
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(f"{self.title_text}  [dim](Enter to confirm, Esc to cancel)[/]")
+            yield Input(placeholder="new folder name, or ↓ to pick an existing one")
+            yield OptionList(*self.folders)
+
+    def on_mount(self) -> None:
+        self._sync_list("")
+
+    def _sync_list(self, text: str) -> None:
+        options = self.query_one(OptionList)
+        options.clear_options()
+        text = text.strip().lower()
+        options.add_options([f for f in self.folders if text in f.lower()])
+        options.display = options.option_count > 0
+        if options.option_count:
+            options.highlighted = 0
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self._sync_list(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value.strip() or None)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(str(event.option.prompt))
+
+    def action_to_list(self) -> None:
+        options = self.query_one(OptionList)
+        if options.option_count:
+            options.focus()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -140,6 +194,8 @@ class DownloaderApp(App):
         Binding("d", "remove", "Remove"),
         Binding("f", "move", "Move to folder"),
         Binding("D", "remove_now", "Remove (no confirm)"),
+        Binding("plus,equals_sign,kp_plus", "jobs(1)", "+ job"),
+        Binding("minus,kp_minus", "jobs(-1)", "- job"),
         Binding("q", "quit", "Quit"),
         Binding("escape", "clear_selection", "Clear selection", show=False),
     ]
@@ -156,7 +212,6 @@ class DownloaderApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.sub_title = str(self.manager.dest_dir)
         table = self.table
         for key, label in COLUMNS:
             table.add_column(label, key=key)
@@ -172,7 +227,7 @@ class DownloaderApp(App):
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         # Queue keys do nothing while a dialog is open.
-        if isinstance(self.screen, ModalScreen) and action in ("add", "toggle", "retry", "remove", "remove_now", "move", "quit"):
+        if isinstance(self.screen, ModalScreen) and action in ("add", "toggle", "retry", "remove", "remove_now", "move", "jobs", "quit"):
             return False
         return True
 
@@ -183,7 +238,8 @@ class DownloaderApp(App):
         table = self.table
         marked = {item.id for item in self.selection()} if self._anchor is not None else set()
         count = len(marked)
-        self.sub_title = f"{self.manager.dest_dir}" + (f"  ·  {count} selected" if count > 1 else "")
+        self.sub_title = (f"{self.manager.dest_dir}  ·  {self.manager.max_parallel} parallel"
+                          + (f"  ·  {count} selected" if count > 1 else ""))
         wanted = {item.id for item in self.manager.items}
         for row_key in list(table.rows):
             if row_key.value not in wanted:
@@ -280,6 +336,10 @@ class DownloaderApp(App):
                 self.manager.resume(item)
         self.refresh_table()
 
+    def action_jobs(self, step: int) -> None:
+        self.manager.set_max_parallel(self.manager.max_parallel + step)
+        self.refresh_table()
+
     def action_move(self) -> None:
         items = [i for i in self.selection() if i.state == DONE]
         if not items:
@@ -300,7 +360,7 @@ class DownloaderApp(App):
                 self.notify("\n".join(problems), severity="error")
             self.refresh_table()
 
-        self.push_screen(PromptScreen(f"Move {len(items)} file(s) to folder", "folder name"), done)
+        self.push_screen(FolderScreen(f"Move {len(items)} file(s) to folder", self.manager.folders()), done)
 
     def action_remove(self) -> None:
         items = self.selection()
