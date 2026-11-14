@@ -16,6 +16,7 @@ from .store import DONE, DOWNLOADING, FAILED, PAUSED, QUEUED, Download, Store
 
 ALLOWED_SCHEMES = {"http", "https", "ftp"}
 KILL_AFTER = 3.0  # seconds to wait after SIGTERM before SIGKILL
+SSL_RETRIES = 4  # extra attempts when a mirror drops the TLS handshake
 
 
 class Manager:
@@ -194,30 +195,36 @@ class Manager:
             await asyncio.gather(previous, return_exceptions=True)
         if not self._current(item, run):
             return
-        lines: list[str] = []
-        try:
-            os.makedirs(os.path.dirname(item.dest), exist_ok=True)
-            self._samples.pop(item.id, None)
-            proc = await wget.start(item.url, item.dest)
-        except OSError as exc:
-            self._finish(item, run, 1, [str(exc)])
-            return
-        self._procs[item.id] = proc
-        if not self._current(item, run):  # paused while wget was starting
-            self._terminate(proc)
-        try:
-            assert proc.stderr is not None
-            async for raw in proc.stderr:
-                line = raw.decode(errors="replace").rstrip()
-                length = wget.parse_length(line)
-                if length is not None:
-                    item.total = length
-                lines.append(line)
-                del lines[:-40]
-            code = await proc.wait()
-        finally:
-            if self._procs.get(item.id) is proc:
-                del self._procs[item.id]
+        for attempt in range(SSL_RETRIES + 1):
+            lines: list[str] = []
+            try:
+                os.makedirs(os.path.dirname(item.dest), exist_ok=True)
+                self._samples.pop(item.id, None)
+                proc = await wget.start(item.url, item.dest)
+            except OSError as exc:
+                self._finish(item, run, 1, [str(exc)])
+                return
+            self._procs[item.id] = proc
+            if not self._current(item, run):  # paused while wget was starting
+                self._terminate(proc)
+            try:
+                assert proc.stderr is not None
+                async for raw in proc.stderr:
+                    line = raw.decode(errors="replace").rstrip()
+                    length = wget.parse_length(line)
+                    if length is not None:
+                        item.total = length
+                    lines.append(line)
+                    del lines[:-40]
+                code = await proc.wait()
+            finally:
+                if self._procs.get(item.id) is proc:
+                    del self._procs[item.id]
+            # Some archive.org mirrors drop the TLS handshake; the redirect
+            # picks another mirror next time, so just try again.
+            if code != 0 and self._current(item, run) and wget.is_ssl_failure(lines):
+                continue
+            break
         self._finish(item, run, code, lines)
 
     def _finish(self, item: Download, run: int, code: int, lines: list[str]) -> None:

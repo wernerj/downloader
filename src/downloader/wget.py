@@ -36,6 +36,10 @@ def error_text(lines: list[str]) -> str:
     return "wget failed"
 
 
+def is_ssl_failure(lines: list[str]) -> bool:
+    return any("Unable to establish SSL connection" in line for line in lines)
+
+
 async def start(url: str, dest: str) -> asyncio.subprocess.Process:
     # LC_ALL=C: wget translates its messages; we parse the English ones.
     env = dict(os.environ, LC_ALL="C")
