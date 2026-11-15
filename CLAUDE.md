@@ -3,7 +3,7 @@
 TUI download queue wrapping `wget`, for personal use. Python + Textual.
 
 ## Layout
-- `src/downloader/naming.py` URL → distinctive file name (parent folder + name + URL hash)
+- `src/downloader/naming.py` URL → distinctive file name (parent folder + name, -2/-3 suffix on clash)
 - `src/downloader/wget.py` builds/starts the wget process, parses its output
 - `src/downloader/manager.py` queue, states, parallel limit, pause/resume
 - `src/downloader/store.py` queue persistence (`~/.downloader/queue.json`)

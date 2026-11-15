@@ -1,21 +1,19 @@
 """Turn a URL into a distinctive local filename.
 
     https://archive.org/details/attila-verona/DVDVideo.rar
-        -> attila-verona-DVDVideo-3fa9c1.rar
+        -> attila-verona-DVDVideo.rar
 
-The name has three parts: a meaningful parent folder from the URL path (if
-there is one), the remote file name, and a short hash of the full URL. The
-hash makes the name unique per URL and stable, so resuming finds the same file.
+The name is a meaningful parent folder from the URL path (if there is one)
+plus the remote file name. It is not guaranteed unique; use `unique_name`
+to add a -2, -3, ... suffix when the name is already taken.
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 from urllib.parse import unquote, urlsplit
 
-HASH_LEN = 6
 MAX_PART = 80
 
 DOUBLE_EXTS = (".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tar.lz", ".tar.z")
@@ -78,7 +76,17 @@ def distinctive_name(url: str) -> str:
     stem, ext = _split_ext(filename)
     stem = stem or "download"
     context = next((p for p in reversed(parents) if is_meaningful(p, stem)), "")
-    digest = hashlib.sha1(url.encode()).hexdigest()[:HASH_LEN]
 
-    pieces = [context[:MAX_PART], stem[:MAX_PART], digest]
+    pieces = [context[:MAX_PART], stem[:MAX_PART]]
     return "-".join(p for p in pieces if p) + ext
+
+
+def unique_name(name: str, taken) -> str:
+    """Return `name`, or the first free `stem-2.ext`, `stem-3.ext`, ... if it is taken."""
+    if not taken(name):
+        return name
+    stem, ext = _split_ext(name)
+    n = 2
+    while taken(f"{stem}-{n}{ext}"):
+        n += 1
+    return f"{stem}-{n}{ext}"

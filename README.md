@@ -37,13 +37,14 @@ python3 -m venv .venv
 ## File names
 
 `https://archive.org/details/attila-verona/DVDVideo.rar` is saved as
-`attila-verona-DVDVideo-3fa9c1.rar`:
+`attila-verona-DVDVideo.rar`:
 
 - the nearest meaningful folder from the URL path (generic ones like `details`,
   `download`, `files`, plain numbers, IDs and versions are skipped),
-- the remote file name,
-- a 6-character hash of the full URL, so two different URLs never share a file
-  and the same URL always maps to the same file (needed for resume).
+- the remote file name.
+
+If that name is already used by another queue item or an existing file, a
+counter is added: `file-2.zip`, `file-3.zip`, ...
 
 ## Good to know
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import wget
-from .naming import distinctive_name
+from .naming import distinctive_name, unique_name
 from .store import DONE, DOWNLOADING, FAILED, PAUSED, QUEUED, Download, Store
 
 ALLOWED_SCHEMES = {"http", "https", "ftp"}
@@ -41,10 +41,16 @@ class Manager:
             raise ValueError("Not a valid http(s) or ftp URL")
         if any(item.url == url for item in self.items):
             raise ValueError("This URL is already in the queue")
+        used = {item.dest for item in self.items}
+
+        def taken(name: str) -> bool:
+            path = self.dest_dir / name
+            return str(path) in used or path.exists()
+
         item = Download(
             id=hashlib.sha1(url.encode()).hexdigest()[:12],
             url=url,
-            dest=str(self.dest_dir / distinctive_name(url)),
+            dest=str(self.dest_dir / unique_name(distinctive_name(url), taken)),
         )
         self.items.append(item)
         self._changed()

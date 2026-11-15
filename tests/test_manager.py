@@ -119,3 +119,15 @@ async def test_move_skips_unfinished(server, tmp_path):
     assert moved == 0 and "not finished" in problems[0]
     assert not (m.dest_dir / "x").exists()  # no empty folder left behind
     await m.shutdown()
+
+
+async def test_clashing_names_get_counter(tmp_path):
+    m = make(tmp_path)
+    m.dest_dir.mkdir()
+    (m.dest_dir / "file.zip").write_bytes(b"old")
+    a = m.add("https://x.com/1/file.zip")
+    b = m.add("https://y.com/2/file.zip")
+    m.pause(a)
+    m.pause(b)
+    assert Path(a.dest).name == "file-2.zip"
+    assert Path(b.dest).name == "file-3.zip"
