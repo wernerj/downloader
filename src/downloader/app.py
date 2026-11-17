@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -29,6 +31,8 @@ def human_size(count: float | None) -> str:
 
 
 def human_time(seconds: float) -> str:
+    if not math.isfinite(seconds):
+        return ""
     seconds = int(seconds)
     if seconds >= 3600:
         return f"{seconds // 3600}h{seconds % 3600 // 60:02d}m"
@@ -53,7 +57,7 @@ def row_cells(item: Download, marked: bool = False) -> dict[str, str]:
         progress = ""
         size = human_size(item.downloaded) if item.downloaded else ""
     speed = eta = ""
-    if item.state == DOWNLOADING and item.speed > 0:
+    if item.state == DOWNLOADING and item.speed >= 1:
         speed = f"{human_size(item.speed)}/s"
         if item.total:
             eta = human_time((item.total - item.downloaded) / item.speed)
