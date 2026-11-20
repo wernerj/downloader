@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+from rich.markup import escape
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -179,6 +180,31 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(value)
 
 
+class ErrorScreen(ModalScreen[None]):
+    """The full error message of a failed download (the table cuts it short)."""
+
+    BINDINGS = [Binding("escape,enter,q", "close", "Close")]
+    DEFAULT_CSS = """
+    ErrorScreen { align: center middle; }
+    ErrorScreen > Vertical { width: 80%; max-width: 110; height: auto;
+        border: round $error; padding: 1 2; background: $surface; }
+    """
+
+    def __init__(self, item: Download):
+        super().__init__()
+        self.item = item
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(f"[b]{escape(self.item.name)}[/]  [dim]({self.item.tool})[/]")
+            yield Label(escape(self.item.url), markup=False)
+            yield Label(self.item.error, markup=False)
+            yield Label("[dim]Enter or Esc to close[/]")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class QueueTable(DataTable):
     """DataTable where Shift+arrows extend a selection and plain arrows drop it."""
 
@@ -331,14 +357,28 @@ class DownloaderApp(App):
             self.table.move_cursor(row=self.table.get_row_index(item.id))
         return True
 
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter on a failed download shows its whole error message."""
+        item = next((i for i in self.manager.items if i.id == event.row_key.value), None)
+        if item and item.state == FAILED:
+            self.push_screen(ErrorScreen(item))
+
+    def on_paste(self, event: events.Paste) -> None:
+        """Pasting on the queue itself adds the URLs in the text (dialogs handle their own pastes)."""
+        if len(self.screen_stack) > 1:
+            return
+        self._add_urls([w for w in event.text.split() if "://" in w])
+
+    def _add_urls(self, urls: list[str]) -> None:
+        added = [self._add(url, select=(i == 0)) for i, url in enumerate(urls)]
+        if len(urls) > 1:
+            self.notify(f"Added {sum(added)} of {len(urls)} URLs")
+
     # ---- keys ----------------------------------------------------------
 
     def action_add(self) -> None:
         def done(text: str | None) -> None:
-            urls = (text or "").split()  # one or many, separated by spaces or new lines
-            added = [self._add(url, select=(i == 0)) for i, url in enumerate(urls)]
-            if len(urls) > 1:
-                self.notify(f"Added {sum(added)} of {len(urls)} URLs")
+            self._add_urls((text or "").split())  # one or many, separated by spaces or new lines
 
         self.push_screen(PromptScreen("Add URL (or paste several)", "https://example.com/file.zip"), done)
 

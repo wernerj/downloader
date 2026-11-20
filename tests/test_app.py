@@ -160,3 +160,41 @@ async def test_pasting_several_urls_adds_them_all(tmp_path):
         await pilot.press("enter")
         await pilot.pause()
         assert [i.url for i in manager.items] == urls
+
+
+async def test_pasting_on_the_queue_adds_urls(tmp_path):
+    from textual import events
+
+    manager = Manager(tmp_path / "dl", Store(tmp_path / "queue.json"), max_parallel=1)
+    app = DownloaderApp(manager, [])
+    async with app.run_test(size=(120, 30)) as pilot:
+        app.post_message(events.Paste("see:\nhttp://127.0.0.1:1/a/one.bin\nhttp://127.0.0.1:1/b/two.bin\n"))
+        await pilot.pause()
+        assert [i.url for i in manager.items] == ["http://127.0.0.1:1/a/one.bin", "http://127.0.0.1:1/b/two.bin"]
+
+        # inside a dialog the paste goes to the dialog, not straight to the queue
+        await pilot.press("a")
+        app.post_message(events.Paste("http://127.0.0.1:1/c/three.bin"))
+        await pilot.pause()
+        assert len(manager.items) == 2
+
+
+async def test_enter_on_failed_download_shows_full_error(tmp_path):
+    from downloader.app import ErrorScreen
+    from downloader.store import FAILED
+
+    manager = Manager(tmp_path / "dl", Store(tmp_path / "queue.json"), max_parallel=1)
+    app = DownloaderApp(manager, [])
+    async with app.run_test(size=(120, 30)) as pilot:
+        item = manager.add("http://127.0.0.1:1/a/one.bin")
+        manager.pause(item)
+        await pilot.pause()
+        await pilot.press("enter")  # not failed: nothing happens
+        assert not isinstance(app.screen, ErrorScreen)
+
+        item.state, item.error = FAILED, "ERROR [markup] " + "long message " * 10
+        app.refresh_table()
+        await pilot.press("enter")
+        assert isinstance(app.screen, ErrorScreen)
+        await pilot.press("escape")
+        assert not isinstance(app.screen, ErrorScreen)
