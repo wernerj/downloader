@@ -145,3 +145,18 @@ async def test_alt_arrows_reorder(server, tmp_path):
         assert manager.items == [b, d, c, a]  # block stops at the bottom
         assert Store(tmp_path / "queue.json").load()[0].id == b.id
         await pilot.press("q")
+
+
+async def test_pasting_several_urls_adds_them_all(tmp_path):
+    from textual import events
+
+    manager = Manager(tmp_path / "dl", Store(tmp_path / "queue.json"), max_parallel=1)
+    app = DownloaderApp(manager, [])
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.press("a")
+        urls = ["http://127.0.0.1:1/a/one.bin", "http://127.0.0.1:1/b/two.bin", "http://127.0.0.1:1/c/three.bin"]
+        app.focused.post_message(events.Paste("\n".join(urls) + "\n"))
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert [i.url for i in manager.items] == urls

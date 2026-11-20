@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -66,6 +67,20 @@ def row_cells(item: Download, marked: bool = False) -> dict[str, str]:
             "size": size, "speed": speed, "eta": eta}
 
 
+class PasteInput(Input):
+    """Input that keeps all lines of a paste (Textual keeps only the first), joined by spaces."""
+
+    def _on_paste(self, event: events.Paste) -> None:
+        text = " ".join(event.text.split())
+        if text:
+            if self.selection.is_empty:
+                self.insert_text_at_cursor(text)
+            else:
+                self.replace(text, *self.selection)
+        event.prevent_default()  # skip Input's own first-line-only handling
+        event.stop()
+
+
 class PromptScreen(ModalScreen[str | None]):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
     DEFAULT_CSS = """
@@ -82,7 +97,7 @@ class PromptScreen(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label(f"{self.title_text}  [dim](Enter to confirm, Esc to cancel)[/]")
-            yield Input(placeholder=self.placeholder)
+            yield PasteInput(placeholder=self.placeholder)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self.dismiss(event.value.strip() or None)
@@ -304,25 +319,28 @@ class DownloaderApp(App):
         row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
         return next((item for item in self.manager.items if item.id == row_key.value), None)
 
-    def _add(self, url: str, select: bool = False) -> None:
+    def _add(self, url: str, select: bool = False) -> bool:
         try:
             item = self.manager.add(url)
         except ValueError as exc:
             self.notify(f"{exc}: {url}", severity="error")
-            return
+            return False
         self._anchor = None
         self.refresh_table()
         if select:
             self.table.move_cursor(row=self.table.get_row_index(item.id))
+        return True
 
     # ---- keys ----------------------------------------------------------
 
     def action_add(self) -> None:
-        def done(url: str | None) -> None:
-            if url:
-                self._add(url, select=True)
+        def done(text: str | None) -> None:
+            urls = (text or "").split()  # one or many, separated by spaces or new lines
+            added = [self._add(url, select=(i == 0)) for i, url in enumerate(urls)]
+            if len(urls) > 1:
+                self.notify(f"Added {sum(added)} of {len(urls)} URLs")
 
-        self.push_screen(PromptScreen("Add URL", "https://example.com/file.zip"), done)
+        self.push_screen(PromptScreen("Add URL (or paste several)", "https://example.com/file.zip"), done)
 
     def action_toggle(self) -> None:
         items = self.selection()
