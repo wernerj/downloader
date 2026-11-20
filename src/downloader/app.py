@@ -60,7 +60,7 @@ def row_cells(item: Download, marked: bool = False) -> dict[str, str]:
     if item.state == DOWNLOADING and item.speed >= 1:
         speed = f"{human_size(item.speed)}/s"
         if item.total:
-            eta = human_time((item.total - item.downloaded) / item.speed)
+            eta = human_time(max(0, item.total - item.downloaded) / item.speed)
     name = f"[b]● {item.name}[/]" if marked else f"  {item.name}"
     return {"name": name, "state": state, "progress": progress,
             "size": size, "speed": speed, "eta": eta}

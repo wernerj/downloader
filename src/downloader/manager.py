@@ -276,7 +276,12 @@ class Manager:
             async for raw in proc.stdout:
                 line = raw.decode(errors="replace").rstrip()
                 path = ytdlp.parse_path(line)
-                if path:
+                size = ytdlp.parse_size(line)
+                if size:
+                    item.total = size
+                elif line.startswith(ytdlp.SIZE_PREFIX):
+                    pass  # size unknown
+                elif path:
                     if path != item.dest:
                         item.dest = path
                         self.store.save(self.items)

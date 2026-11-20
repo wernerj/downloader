@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 TOOL = "yt-dlp"
 FILE_PREFIX = "DL-FILE:"  # printed when the output file name is known
+SIZE_PREFIX = "DL-SIZE:"  # yt-dlp's (estimated) size of the whole download
 DONE_PREFIX = "DL-DONE:"  # printed when the final file is in place
 
 # Sites wget cannot handle: the URL is a web page, not a file.
@@ -40,6 +41,7 @@ def build_command(url: str, dest_dir: str) -> list[str]:
         "-P", dest_dir,
         "-o", "%(title).80B-%(id)s.%(ext)s",
         "--print", f"before_dl:{FILE_PREFIX}%(filename)s",
+        "--print", f"before_dl:{SIZE_PREFIX}%(filesize,filesize_approx)s",
         "--print", f"after_move:{DONE_PREFIX}%(filepath)s",
         "--", url,
     ]
@@ -51,6 +53,16 @@ def parse_path(line: str) -> str | None:
         if line.startswith(prefix):
             return line[len(prefix):].strip() or None
     return None
+
+
+def parse_size(line: str) -> int | None:
+    """Estimated total bytes from a 'DL-SIZE:' line ('NA' when yt-dlp does not know)."""
+    if not line.startswith(SIZE_PREFIX):
+        return None
+    try:
+        return int(float(line[len(SIZE_PREFIX):])) or None
+    except ValueError:
+        return None
 
 
 def error_text(lines: list[str]) -> str:
