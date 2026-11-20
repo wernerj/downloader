@@ -211,12 +211,16 @@ class QueueTable(DataTable):
     BINDINGS = [
         Binding("shift+up", "extend(-1)", "Select up", show=False),
         Binding("shift+down", "extend(1)", "Select down", show=False),
+        Binding("A", "select_all", "Select all", show=False),
         Binding("alt+up", "shift_items(-1)", "Move up", show=False),
         Binding("alt+down", "shift_items(1)", "Move down", show=False),
     ]
 
     def action_extend(self, step: int) -> None:
         self.app.extend_selection(step)
+
+    def action_select_all(self) -> None:
+        self.app.select_all()
 
     def action_shift_items(self, step: int) -> None:
         self.app.shift_items(step)
@@ -316,6 +320,14 @@ class DownloaderApp(App):
         if self._anchor is None:
             self._anchor = table.cursor_row
         table.move_cursor(row=max(0, min(table.row_count - 1, table.cursor_row + step)))
+        self.refresh_table()
+
+    def select_all(self) -> None:
+        table = self.table
+        if not table.row_count:
+            return
+        self._anchor = 0
+        table.move_cursor(row=table.row_count - 1)
         self.refresh_table()
 
     def shift_items(self, step: int) -> None:

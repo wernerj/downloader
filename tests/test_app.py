@@ -198,3 +198,15 @@ async def test_enter_on_failed_download_shows_full_error(tmp_path):
         assert isinstance(app.screen, ErrorScreen)
         await pilot.press("escape")
         assert not isinstance(app.screen, ErrorScreen)
+
+
+async def test_shift_a_selects_all(tmp_path):
+    manager = Manager(tmp_path / "dl", Store(tmp_path / "queue.json"), max_parallel=1)
+    urls = [f"http://127.0.0.1:1/{n}/file.bin" for n in "abcd"]
+    app = DownloaderApp(manager, urls)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.press("A")
+        assert app.selection() == manager.items
+        assert "4 selected" in app.sub_title
+        await pilot.press("up")  # a plain arrow clears the selection
+        assert len(app.selection()) == 1

@@ -24,6 +24,7 @@ python3 -m venv .venv
 | Key | Action |
 |---|---|
 | `↑` / `↓` | move selection |
+| `Shift+A` | select all |
 | `Shift+↑` / `Shift+↓` | select several (`p`, `d`, `D`, `r` then act on all; `Esc` or a plain arrow clears) |
 | `Option+↑` / `Option+↓` | move the selected items up / down in the queue (waiting downloads start in list order) |
 | `a` | add URL |
