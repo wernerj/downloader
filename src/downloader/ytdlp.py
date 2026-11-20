@@ -10,7 +10,8 @@ from urllib.parse import urlsplit
 
 TOOL = "yt-dlp"
 FILE_PREFIX = "DL-FILE:"  # printed when the output file name is known
-SIZE_PREFIX = "DL-SIZE:"  # yt-dlp's (estimated) size of the whole download
+SIZE_PREFIX = "DL-SIZE:"  # size, duration and bitrate of the whole download
+PROG_PREFIX = "DL-PROG:"  # live progress of the stream being fetched
 DONE_PREFIX = "DL-DONE:"  # printed when the final file is in place
 
 # Sites wget cannot handle: the URL is a web page, not a file.
@@ -35,13 +36,14 @@ def build_command(url: str, dest_dir: str) -> list[str]:
     return [
         "yt-dlp",
         "--no-playlist",  # one URL, one file
-        "--no-update", "--no-progress", "--newline",
+        "--no-update", "--newline",
+        "--progress-template", f"download:{PROG_PREFIX}%(progress.downloaded_bytes)s:%(progress.total_bytes)s:%(progress.total_bytes_estimate)s",
         "--restrict-filenames",
         "--no-simulate",  # --print would otherwise skip the download
         "-P", dest_dir,
         "-o", "%(title).80B-%(id)s.%(ext)s",
         "--print", f"before_dl:{FILE_PREFIX}%(filename)s",
-        "--print", f"before_dl:{SIZE_PREFIX}%(filesize,filesize_approx)s",
+        "--print", f"before_dl:{SIZE_PREFIX}%(filesize,filesize_approx)s:%(duration)s:%(tbr)s",
         "--print", f"after_move:{DONE_PREFIX}%(filepath)s",
         "--", url,
     ]
@@ -55,14 +57,39 @@ def parse_path(line: str) -> str | None:
     return None
 
 
+def _number(text: str) -> float | None:
+    try:
+        return float(text)
+    except ValueError:  # "NA"
+        return None
+
+
 def parse_size(line: str) -> int | None:
-    """Estimated total bytes from a 'DL-SIZE:' line ('NA' when yt-dlp does not know)."""
+    """Expected total bytes from a 'DL-SIZE:' line, or None when yt-dlp cannot tell.
+
+    Streams (HLS/DASH) have no file size, so fall back to duration x bitrate.
+    """
     if not line.startswith(SIZE_PREFIX):
         return None
-    try:
-        return int(float(line[len(SIZE_PREFIX):])) or None
-    except ValueError:
+    parts = (line[len(SIZE_PREFIX):].split(":") + ["", ""])[:3]
+    size, duration, tbr = (_number(p) for p in parts)
+    if size:
+        return int(size)
+    if duration and tbr:  # tbr is in kbit/s
+        return int(duration * tbr * 1000 / 8)
+    return None
+
+
+def parse_progress(line: str) -> tuple[int, int] | None:
+    """(bytes of this stream so far, its size or estimated size) from a 'DL-PROG:' line."""
+    if not line.startswith(PROG_PREFIX):
         return None
+    parts = (line[len(PROG_PREFIX):].split(":") + ["", "", ""])[:3]
+    done, total, estimate = (_number(p) for p in parts)
+    expected = total or estimate
+    if done is None or not expected:
+        return None
+    return int(done), int(expected)
 
 
 def error_text(lines: list[str]) -> str:

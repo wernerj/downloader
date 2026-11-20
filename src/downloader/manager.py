@@ -262,6 +262,7 @@ class Manager:
 
     async def _run_ytdlp(self, item: Download, run: int) -> tuple[int, list[str]]:
         lines: list[str] = []
+        sized = False  # did yt-dlp give an estimate for the whole download?
         try:
             os.makedirs(self.dest_dir, exist_ok=True)
             self._samples.pop(item.id, None)
@@ -275,13 +276,17 @@ class Manager:
             assert proc.stdout is not None
             async for raw in proc.stdout:
                 line = raw.decode(errors="replace").rstrip()
-                path = ytdlp.parse_path(line)
-                size = ytdlp.parse_size(line)
-                if size:
-                    item.total = size
-                elif line.startswith(ytdlp.SIZE_PREFIX):
-                    pass  # size unknown
-                elif path:
+                if line.startswith(ytdlp.SIZE_PREFIX):
+                    size = ytdlp.parse_size(line)
+                    if size:
+                        item.total, sized = size, True
+                elif line.startswith(ytdlp.PROG_PREFIX):
+                    # Without an overall size, use the stream's own estimate plus what is already on disk.
+                    progress = ytdlp.parse_progress(line)
+                    if progress and not sized:
+                        done, expected = progress
+                        item.total = max(0, ytdlp.size_on_disk(item.dest) - done) + expected
+                elif (path := ytdlp.parse_path(line)):
                     if path != item.dest:
                         item.dest = path
                         self.store.save(self.items)
