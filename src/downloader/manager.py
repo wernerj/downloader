@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import wget
+from . import wget, ytdlp
 from .naming import distinctive_name, unique_name
 from .store import DONE, DOWNLOADING, FAILED, PAUSED, QUEUED, Download, Store
 
@@ -47,11 +47,14 @@ class Manager:
             path = self.dest_dir / name
             return str(path) in used or path.exists()
 
-        item = Download(
-            id=hashlib.sha1(url.encode()).hexdigest()[:12],
-            url=url,
-            dest=str(self.dest_dir / unique_name(distinctive_name(url), taken)),
-        )
+        item_id = hashlib.sha1(url.encode()).hexdigest()[:12]
+        if ytdlp.is_video_site(url) and ytdlp.ytdlp_path():
+            # The real file name is only known once yt-dlp has looked at the page.
+            item = Download(id=item_id, url=url, tool=ytdlp.TOOL,
+                            dest=str(self.dest_dir / ytdlp.placeholder_name(url, item_id)))
+        else:
+            item = Download(id=item_id, url=url,
+                            dest=str(self.dest_dir / unique_name(distinctive_name(url), taken)))
         self.items.append(item)
         self._changed()
         return item
@@ -195,12 +198,37 @@ class Manager:
         return self._runs.get(item.id) == run and item.state == DOWNLOADING and item in self.items
 
     async def _run(self, item: Download, run: int, previous: asyncio.Task | None) -> None:
-        # A just-paused wget may still be shutting down; never have two
+        # A just-paused process may still be shutting down; never have two
         # processes writing to the same file.
         if previous and not previous.done():
             await asyncio.gather(previous, return_exceptions=True)
         if not self._current(item, run):
             return
+        if item.tool == ytdlp.TOOL:
+            code, lines = await self._run_ytdlp(item, run)
+            self._finish(item, run, code, lines)
+            return
+        code, lines = await self._run_wget(item, run)
+        if code == 0 or not self._current(item, run) or not ytdlp.ytdlp_path():
+            self._finish(item, run, code, lines)
+            return
+        # wget failed: the URL may be a page that only yt-dlp understands.
+        wget_error = wget.error_text(lines)
+        self._drop_empty(item)
+        old_dest = item.dest
+        item.tool = ytdlp.TOOL
+        item.dest = str(self.dest_dir / ytdlp.placeholder_name(item.url, item.id))
+        item.downloaded, item.total = 0, None
+        code, lines = await self._run_ytdlp(item, run)
+        if code != 0 and self._current(item, run):
+            # yt-dlp could not do it either; stay a wget download so a retry starts with wget.
+            item.tool, item.dest = "wget", old_dest
+            self._measure(item)
+            self._finish(item, run, code, lines, f"{wget_error} ({ytdlp.error_text(lines)})")
+            return
+        self._finish(item, run, code, lines)
+
+    async def _run_wget(self, item: Download, run: int) -> tuple[int, list[str]]:
         for attempt in range(SSL_RETRIES + 1):
             lines: list[str] = []
             try:
@@ -208,8 +236,7 @@ class Manager:
                 self._samples.pop(item.id, None)
                 proc = await wget.start(item.url, item.dest)
             except OSError as exc:
-                self._finish(item, run, 1, [str(exc)])
-                return
+                return 1, [str(exc)]
             self._procs[item.id] = proc
             if not self._current(item, run):  # paused while wget was starting
                 self._terminate(proc)
@@ -231,9 +258,38 @@ class Manager:
             if code != 0 and self._current(item, run) and wget.is_ssl_failure(lines):
                 continue
             break
-        self._finish(item, run, code, lines)
+        return code, lines
 
-    def _finish(self, item: Download, run: int, code: int, lines: list[str]) -> None:
+    async def _run_ytdlp(self, item: Download, run: int) -> tuple[int, list[str]]:
+        lines: list[str] = []
+        try:
+            os.makedirs(self.dest_dir, exist_ok=True)
+            self._samples.pop(item.id, None)
+            proc = await ytdlp.start(item.url, str(self.dest_dir))
+        except OSError as exc:
+            return 1, [f"ERROR: {exc}"]
+        self._procs[item.id] = proc
+        if not self._current(item, run):  # paused while yt-dlp was starting
+            self._terminate(proc)
+        try:
+            assert proc.stdout is not None
+            async for raw in proc.stdout:
+                line = raw.decode(errors="replace").rstrip()
+                path = ytdlp.parse_path(line)
+                if path:
+                    if path != item.dest:
+                        item.dest = path
+                        self.store.save(self.items)
+                else:
+                    lines.append(line)
+                    del lines[:-40]
+            code = await proc.wait()
+        finally:
+            if self._procs.get(item.id) is proc:
+                del self._procs[item.id]
+        return code, lines
+
+    def _finish(self, item: Download, run: int, code: int, lines: list[str], error: str = "") -> None:
         self._measure(item)
         if not self._current(item, run):
             return  # paused or removed meanwhile; that action already set the state
@@ -243,7 +299,7 @@ class Manager:
             item.total = item.downloaded
         else:
             item.state = FAILED
-            item.error = wget.error_text(lines)
+            item.error = error or (ytdlp.error_text(lines) if item.tool == ytdlp.TOOL else wget.error_text(lines))
             self._drop_empty(item)
         self._changed()
 
@@ -271,6 +327,11 @@ class Manager:
 
     @staticmethod
     def _measure(item: Download) -> None:
+        if item.tool == ytdlp.TOOL:
+            size = ytdlp.size_on_disk(item.dest)
+            if size or item.state != DONE:
+                item.downloaded = size
+            return
         try:
             item.downloaded = os.path.getsize(item.dest)
         except OSError:

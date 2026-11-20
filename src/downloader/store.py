@@ -20,6 +20,7 @@ class Download:
     total: int | None = None
     downloaded: int = 0
     error: str = ""
+    tool: str = "wget"  # "wget" or "yt-dlp"
     speed: float = 0.0  # bytes per second, not saved
 
     @property
@@ -51,6 +52,7 @@ class Store:
                     total=entry.get("total"),
                     downloaded=int(entry.get("downloaded", 0)),
                     error=str(entry.get("error", "")),
+                    tool=str(entry.get("tool", "wget")),
                 )
             except (KeyError, TypeError, ValueError):
                 continue

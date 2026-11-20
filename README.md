@@ -1,10 +1,10 @@
 # downloader
 
-A terminal UI download queue. Every download is a real `wget` process.
+A terminal UI download queue. Every download is a real `wget` process; video sites (YouTube, Facebook, xvideos, xhamster, ...) and anything wget fails on go through `yt-dlp` instead.
 
 ## Install
 
-Needs Python 3.11+ and `wget` on PATH (`brew install wget`).
+Needs Python 3.11+ and `wget` on PATH (`brew install wget`). `yt-dlp` (and `ffmpeg` for merging video and audio) is optional (`brew install yt-dlp ffmpeg`).
 
 ```
 python3 -m venv .venv

@@ -125,7 +125,7 @@ async def test_clashing_names_get_counter(tmp_path):
     m = make(tmp_path)
     m.dest_dir.mkdir()
     (m.dest_dir / "file.zip").write_bytes(b"old")
-    a = m.add("https://x.com/1/file.zip")
+    a = m.add("https://one.example/1/file.zip")
     b = m.add("https://y.com/2/file.zip")
     m.pause(a)
     m.pause(b)
